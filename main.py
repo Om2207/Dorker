@@ -14,7 +14,7 @@ init()
 
 # Constants
 OWNER_ID = 6008343239
-WASTE_KEYWORDS = ["forum", "google", "wikipedia", "stackoverflow", "freelancer", "quora", "facebook", "amazon", "youtube", "reddit", "ebay"]
+WASTE_KEYWORDS = ["forum", "google", "wikipedia", "stackoverflow", "freelancer", "quora", "facebook", "amazon", "youtube", "reddit", "ebay", "Yahoo", "bing", "duckduckgo"]
 SEARCH_ENGINES = [
     "https://duckduckgo.com/?q={dork_keywords}&t=h_&ia=web",
     "http://www.bing.com/search?q={dork_keywords}&count=50&first=0",
