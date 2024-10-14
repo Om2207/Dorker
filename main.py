@@ -10,6 +10,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from fake_useragent import UserAgent
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+
 
 # Bot token (easy to change)
 BOT_TOKEN = "7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ"
