@@ -14,9 +14,38 @@ from bs4 import BeautifulSoup
 # Bot token (easy to change)
 BOT_TOKEN = "7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ"
 
+
 # Constants
 OWNER_ID = 6008343239
-WASTE_KEYWORDS = ["forum", "google", "wikipedia", "stackoverflow", "freelancer", "quora", "facebook", "amazon", "youtube", "reddit", "ebay", "Yahoo", "bing", "duckduckgo"]
+WASTE_KEYWORDS = [
+    # Search engines and related terms
+    "google", "yahoo", "bing", "duckduckgo", "baidu", "yandex", "ask", "aol", "excite", "dogpile", "webcrawler",
+    "search", "engine", "query", "results", "serp",
+    
+    # Social media and content platforms
+    "facebook", "twitter", "instagram", "linkedin", "youtube", "tiktok", "reddit", "pinterest", "tumblr", "quora",
+    "medium", "wordpress", "blogger",
+    
+    # E-commerce and online marketplaces
+    "amazon", "ebay", "etsy", "alibaba", "shopify", "walmart", "target", "bestbuy",
+    
+    # Payment gateways and financial services
+    "paypal", "stripe", "square", "adyen", "worldpay", "authorize.net", "2checkout", "skrill", "payoneer",
+    "wepay", "amazon pay", "google pay", "apple pay", "venmo", "transferwise", "paymentwall", "bluesnap",
+    
+    # File types and extensions
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "json", "xml",
+    
+    # Tech companies and platforms
+    "microsoft", "apple", "ibm", "oracle", "salesforce", "adobe", "cisco", "intel", "dell", "hp",
+    
+    # Miscellaneous
+    "advertisement", "sponsored", "promotion", "offer", "deal", "discount", "free", "trial",
+    "copyright", "trademark", "legal", "policy", "guidelines", "rules",
+    "error", "404", "not found", "maintenance", "update", "upgrade",
+    "mobile", "desktop", "app", "software", "hardware", "device",
+]
+
 SEARCH_ENGINES = [
     "https://duckduckgo.com/?q={dork_keywords}&t=h_&ia=web",
     "http://www.bing.com/search?q={dork_keywords}&count=50&first=0",
@@ -226,16 +255,24 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result.extend(links)
 
     cleaned_links = list(dict.fromkeys(result))
-    filtered_links = [link for link in cleaned_links if not any(keyword in link.lower() for keyword in WASTE_KEYWORDS)]
+    
+    # More stringent filtering
+    filtered_links = []
+    for link in cleaned_links:
+        if not any(keyword in link.lower() for keyword in WASTE_KEYWORDS):
+            parsed_url = urlparse(link)
+            if parsed_url.scheme in ['http', 'https'] and parsed_url.netloc:
+                if not any(search_domain in parsed_url.netloc for search_domain in ['google', 'yahoo', 'bing', 'duckduckgo']):
+                    filtered_links.append(link)
 
     if filtered_links:
         file_name = f"dork_results_{user_id}.txt"
         with open(file_name, 'w', encoding='utf8') as file:
             file.write('\n'.join(filtered_links))
-        await update.message.reply_document(open(file_name, 'rb'), caption=f"{EMOJI_ROCKET} Here are your dork results!")
+        await update.message.reply_document(open(file_name, 'rb'), caption=f"{EMOJI_ROCKET} Here are your filtered dork results!")
         os.remove(file_name)
     else:
-        await update.message.reply_text(f"{EMOJI_SEARCH} No valid links found.")
+        await update.message.reply_text(f"{EMOJI_SEARCH} No valid links found after filtering.")
 
     await progress_message.delete()
 
@@ -286,6 +323,7 @@ async def check_graphql(html, url):
     return 'Not detected'
 
 async def check_cloudflare(html):
+    
     cloudflare_patterns = [
         r'cloudflare-nginx',
         r'__cfduid',
@@ -339,7 +377,7 @@ async def process_url(session, url):
 async def gates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if not is_authorized(user_id):
-        await  update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this bot.")
+        await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this bot.")
         return
 
     if not update.message.reply_to_message or not update.message.reply_to_message.document:
