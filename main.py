@@ -3,12 +3,16 @@ import re
 import time
 import random
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from fake_useragent import UserAgent
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
+
+# Bot token (easy to change)
+BOT_TOKEN = "7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ"
 
 # Constants
 OWNER_ID = 6008343239
@@ -23,10 +27,6 @@ SEARCH_ENGINES = [
 # User-agent
 ua = UserAgent()
 
-# In-memory storage for authorized users and proxies
-authorized_users = {}
-proxies = []
-
 # Emojis for better visual appeal
 EMOJI_ROCKET = "🚀"
 EMOJI_LOCK = "🔒"
@@ -35,39 +35,71 @@ EMOJI_GEAR = "⚙️"
 EMOJI_SEARCH = "🔍"
 EMOJI_CHART = "📊"
 EMOJI_ID = "🆔"
+EMOJI_COPY = "📋"
 
-# Load and save functions (unchanged)
-def load_authorized_users():
-    if os.path.exists('users.txt'):
-        with open('users.txt', 'r') as file:
-            for line in file:
-                parts = line.strip().split(',')
-                if len(parts) == 2:
-                    user_id, expiry = parts
-                    authorized_users[int(user_id)] = datetime.strptime(expiry, '%Y-%m-%d')
+# Database setup
+def setup_database():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            expiry_date TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS proxies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proxy TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-def save_authorized_users():
-    with open('users.txt', 'w') as file:
-        for user_id, expiry in authorized_users.items():
-            file.write(f"{user_id},{expiry.strftime('%Y-%m-%d')}\n")
+# Database operations
+def add_user(user_id, expiry_date):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO users (user_id, expiry_date) VALUES (?, ?)', (user_id, expiry_date.strftime('%Y-%m-%d')))
+    conn.commit()
+    conn.close()
 
-def load_proxies():
-    if os.path.exists('proxy.txt'):
-        with open('proxy.txt', 'r') as file:
-            proxies.extend(file.read().splitlines())
+def get_user(user_id):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT expiry_date FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        return datetime.strptime(result[0], '%Y-%m-%d')
+    return None
 
-def save_proxies():
-    with open('proxy.txt', 'w') as file:
-        file.write('\n'.join(proxies))
+def add_proxy(proxy):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO proxies (proxy) VALUES (?)', (proxy,))
+    conn.commit()
+    conn.close()
 
-def remove_proxies():
-    if os.path.exists('proxy.txt'):
-        os.remove('proxy.txt')
-    proxies.clear()
+def get_proxies():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT proxy FROM proxies')
+    result = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return result
+
+def remove_all_proxies():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM proxies')
+    conn.commit()
+    conn.close()
 
 # Helper functions
 def is_authorized(user_id):
-    return user_id in authorized_users and authorized_users[user_id] >= datetime.now()
+    expiry_date = get_user(user_id)
+    return expiry_date and expiry_date >= datetime.now()
 
 def create_menu_keyboard():
     keyboard = [
@@ -80,26 +112,26 @@ def create_menu_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id == OWNER_ID:
-        welcome_message = f"{EMOJI_ROCKET} *Welcome, Master!*\n\nWhat would you like to do today?"
+        welcome_message = f"{EMOJI_ROCKET} <b>Welcome, Master!</b>\n\nWhat would you like to do today?"
     elif is_authorized(user_id):
-        welcome_message = f"{EMOJI_ROCKET} *Welcome to DorkMaster 3000!*\n\nWhat would you like to do today?"
+        welcome_message = f"{EMOJI_ROCKET} <b>Welcome to DorkMaster 3000!</b>\n\nWhat would you like to do today?"
     else:
         welcome_message = f"{EMOJI_LOCK} You are not authorized to use this bot. Please contact the owner."
-        await update.message.reply_text(welcome_message)
+        await update.message.reply_text(welcome_message, parse_mode='HTML')
         return
 
-    await update.message.reply_text(welcome_message, reply_markup=create_menu_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(welcome_message, reply_markup=create_menu_keyboard(), parse_mode='HTML')
 
 async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == 'dork':
-        await query.message.reply_text(f"{EMOJI_SEARCH} Please enter your dork query:\n\nExample: `/dork Shopify+lipstick`", parse_mode='Markdown')
+        await query.message.reply_text(f"{EMOJI_SEARCH} Please enter your dork query:\n\nExample: <code>/dork Shopify+lipstick</code>", parse_mode='HTML')
     elif query.data == 'gates':
         await query.message.reply_text(f"{EMOJI_CHART} Please upload a file with URLs to check, then reply to it with /gates")
     elif query.data == 'id':
-        await user_info(update, context)
+        await user_info(update, context, is_callback=True)
 
 async def authorize(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -108,11 +140,22 @@ async def authorize(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_user_id = int(context.args[0])
             days = int(context.args[1])
             expiry_date = datetime.now() + timedelta(days=days)
-            authorized_users[new_user_id] = expiry_date
-            save_authorized_users()
+            add_user(new_user_id, expiry_date)
             await update.message.reply_text(f"{EMOJI_UNLOCK} User {new_user_id} has been authorized for {days} days.")
+            
+            # Notify the authorized user
+            try:
+                await context.bot.send_message(
+                    chat_id=new_user_id,
+                    text=f"{EMOJI_UNLOCK} You have been authorized to use DorkMaster 3000 for {days} days! Use /start to begin.",
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                await update.message.reply_text(f"Authorized successfully, but failed to notify the user: {str(e)}")
         except (IndexError, ValueError):
-            await update.message.reply_text("Usage: /authorize `<user_id>` `<days>`")
+            await update.message.reply_text("Usage: /authorize <user_id> <days>")
+        except Exception as e:
+            await update.message.reply_text(f"An error occurred: {str(e)}")
     else:
         await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this command.")
 
@@ -124,8 +167,7 @@ async def proxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = proxy.split(':')
             if len(parts) == 4:
                 proxy = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
-            proxies.append(proxy)
-        save_proxies()
+            add_proxy(proxy)
         await update.message.reply_text(f"{EMOJI_GEAR} Proxies have been updated.")
     else:
         await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this command.")
@@ -133,12 +175,11 @@ async def proxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id == OWNER_ID:
-        remove_proxies()
+        remove_all_proxies()
         await update.message.reply_text(f"{EMOJI_GEAR} All proxies have been removed.")
     else:
         await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this command.")
 
-# Fetch URL and process search engine functions (unchanged)
 async def fetch_url(session, url, proxy=None):
     try:
         async with session.get(url, headers={'User-Agent': ua.random}, proxy=proxy, timeout=10) as response:
@@ -166,7 +207,7 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = ' '.join(context.args)
     if not query:
-        await update.message.reply_text(f"{EMOJI_SEARCH} Usage: /dork `<query>`")
+        await update.message.reply_text(f"{EMOJI_SEARCH} Usage: /dork <query>")
         return
 
     progress_message = await update.message.reply_text(f"{EMOJI_GEAR} Dorking in progress. Please wait...")
@@ -174,6 +215,7 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = []
     async with ClientSession() as session:
         tasks = []
+        proxies = get_proxies()
         for search_engine in SEARCH_ENGINES:
             proxy = random.choice(proxies) if proxies else None
             tasks.append(process_search_engine(session, search_engine, query, proxy))
@@ -197,7 +239,6 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await progress_message.delete()
 
-# Check functions (unchanged)
 async def check_gateway(html):
     gateway_patterns = {
         'Stripe': r'stripe\.com|stripe\.js',
@@ -298,7 +339,7 @@ async def process_url(session, url):
 async def gates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if not is_authorized(user_id):
-        await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this bot.")
+        await  update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this bot.")
         return
 
     if not update.message.reply_to_message or not update.message.reply_to_message.document:
@@ -327,19 +368,34 @@ async def gates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(file_path)
     await progress_message.delete()
 
-async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id in authorized_users:
-        expiry_date =   authorized_users[user_id].strftime('%Y-%m-%d')
-        await update.message.reply_text(f"{EMOJI_ID} Your user ID: {user_id}\nAuthorized until: {expiry_date}")
+async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    if is_callback:
+        user_id = update.callback_query.from_user.id
+        message = update.callback_query.message
     else:
-        await update.message.reply_text(f"{EMOJI_ID} Your user ID: {user_id}\n{EMOJI_LOCK} You are not authorized to use this bot.")
+        user_id = update.message.from_user.id
+        message = update.message
+
+    expiry_date = get_user(user_id)
+    if expiry_date:
+        await message.reply_text(
+            f"{EMOJI_ID} Your user ID: <code>{user_id}</code>\n"
+            f"Authorized until: {expiry_date.strftime('%Y-%m-%d')}\n\n"
+            f"{EMOJI_COPY} Copy your ID by tapping the code above.",
+            parse_mode='HTML'
+        )
+    else:
+        await message.reply_text(
+            f"{EMOJI_ID} Your user ID: <code>{user_id}</code>\n"
+            f"{EMOJI_LOCK} You are not authorized to use this bot.\n\n"
+            f"{EMOJI_COPY} Copy your ID by tapping the code above.",
+            parse_mode='HTML'
+        )
 
 def main():
-    load_authorized_users()
-    load_proxies()
+    setup_database()
 
-    application = Application.builder().token("7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ").build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("authorize", authorize))
@@ -347,7 +403,7 @@ def main():
     application.add_handler(CommandHandler("remove", remove))
     application.add_handler(CommandHandler("dork", dork))
     application.add_handler(CommandHandler("gates", gates))
-    application.add_handler(CommandHandler("id", user_info))
+    application.add_handler(CommandHandler("id", lambda update, context: user_info(update, context, is_callback=False)))
     application.add_handler(CallbackQueryHandler(menu_actions))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
