@@ -339,7 +339,7 @@ def main():
     load_authorized_users()
     load_proxies()
 
-    application = Application.builder().token("7280917209:AAGVxQ-cLURLfVIvLSwJCsWyAAUCIE0Su4o").build()
+    application = Application.builder().token("7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ").build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("authorize", authorize))
