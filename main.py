@@ -10,49 +10,31 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from fake_useragent import UserAgent
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
-
+from urllib.parse import urlparse, quote_plus
 
 # Bot token (easy to change)
 BOT_TOKEN = "7280917209:AAFH8KViP6T3fqd92QKtMjtTwxH6EBre0qQ"
 
-
 # Constants
 OWNER_ID = 6008343239
 WASTE_KEYWORDS = [
-    # Search engines and related terms
     "google", "yahoo", "bing", "duckduckgo", "baidu", "yandex", "ask", "aol", "excite", "dogpile", "webcrawler",
-    "search", "engine", "query", "results", "serp",
-    
-    # Social media and content platforms
-    "facebook", "twitter", "instagram", "linkedin", "youtube", "tiktok", "reddit", "pinterest", "tumblr", "quora",
-    "medium", "wordpress", "blogger",
-    
-    # E-commerce and online marketplaces
-    "amazon", "ebay", "etsy", "alibaba", "shopify", "walmart", "target", "bestbuy",
-    
-    # Payment gateways and financial services
-    "paypal", "stripe", "square", "adyen", "worldpay", "authorize.net", "2checkout", "skrill", "payoneer",
-    "wepay", "amazon pay", "google pay", "apple pay", "venmo", "transferwise", "paymentwall", "bluesnap",
-    
-    # File types and extensions
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "json", "xml",
-    
-    # Tech companies and platforms
-    "microsoft", "apple", "ibm", "oracle", "salesforce", "adobe", "cisco", "intel", "dell", "hp",
-    
-    # Miscellaneous
-    "advertisement", "sponsored", "promotion", "offer", "deal", "discount", "free", "trial",
-    "copyright", "trademark", "legal", "policy", "guidelines", "rules",
-    "error", "404", "not found", "maintenance", "update", "upgrade",
+    "search", "engine", "query", "results", "serp", "facebook", "twitter", "instagram", "linkedin", "youtube", 
+    "tiktok", "reddit", "pinterest", "tumblr", "quora", "medium", "wordpress", "blogger", "amazon", "ebay", "etsy", 
+    "alibaba", "shopify", "walmart", "target", "bestbuy", "paypal", "stripe", "square", "adyen", "worldpay", 
+    "authorize.net", "2checkout", "skrill", "payoneer", "wepay", "amazon pay", "google pay", "apple pay", "venmo", 
+    "transferwise", "paymentwall", "bluesnap", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", 
+    "json", "xml", "microsoft", "apple", "ibm", "oracle", "salesforce", "adobe", "cisco", "intel", "dell", "hp",
+    "advertisement", "sponsored", "promotion", "offer", "deal", "discount", "free", "trial", "copyright", "trademark", 
+    "legal", "policy", "guidelines", "rules", "error", "404", "not found", "maintenance", "update", "upgrade",
     "mobile", "desktop", "app", "software", "hardware", "device",
 ]
 
 SEARCH_ENGINES = [
     "https://duckduckgo.com/?q={dork_keywords}&t=h_&ia=web",
-    "http://www.bing.com/search?q={dork_keywords}&count=50&first=0",
-    "https://search.yahoo.com/search?p={dork_keywords}&b=1",
-    "http://www.google.com/search?q={dork_keywords}&num=100&start=0",
+    "http://www.bing.com/search?q={dork_keywords}&count=50&first={page}",
+    "https://search.yahoo.com/search?p={dork_keywords}&b={page}",
+    "http://www.google.com/search?q={dork_keywords}&num=100&start={page}",
 ]
 
 # User-agent
@@ -101,8 +83,11 @@ def get_user(user_id):
     cursor.execute('SELECT expiry_date FROM users WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     conn.close()
-    if result:
-        return datetime.strptime(result[0], '%Y-%m-%d')
+    if result and result[0]:
+        try:
+            return datetime.strptime(result[0], '%Y-%m-%d')
+        except ValueError:
+            return None
     return None
 
 def add_proxy(proxy):
@@ -219,8 +204,8 @@ async def fetch_url(session, url, proxy=None):
         print(f"Error fetching {url}: {e}")
         return None
 
-async def process_search_engine(session, search_engine, query, proxy=None):
-    url = search_engine.replace('{dork_keywords}', query)
+async def process_search_engine(session, search_engine, query, page, proxy=None):
+    url = search_engine.replace('{dork_keywords}', quote_plus(query)).replace('{page}', str(page))
     html = await fetch_url(session, url, proxy)
     if html:
         if 'captcha' in html.lower():
@@ -248,13 +233,17 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tasks = []
         proxies = get_proxies()
         for search_engine in SEARCH_ENGINES:
-            proxy = random.choice(proxies) if proxies else None
-            tasks.append(process_search_engine(session, search_engine, query, proxy))
+            for page in range(0, 300, 10):  # Adjusted to potentially get up to 3000 links (100 per page * 30 pages)
+                proxy = random.choice(proxies) if proxies else None
+                tasks.append(process_search_engine(session, search_engine, query, page, proxy))
         
         results = await asyncio.gather(*tasks)
         for links in results:
             if links:
                 result.extend(links)
+                if len(result) >= 3000:
+                    break
+        result = result[:3000]  # Ensure we don't exceed 3000 links
 
     cleaned_links = list(dict.fromkeys(result))
     
@@ -271,7 +260,7 @@ async def dork(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_name = f"dork_results_{user_id}.txt"
         with open(file_name, 'w', encoding='utf8') as file:
             file.write('\n'.join(filtered_links))
-        await update.message.reply_document(open(file_name, 'rb'), caption=f"{EMOJI_ROCKET} Here are your filtered dork results!")
+        await update.message.reply_document(open(file_name, 'rb'), caption=f"{EMOJI_ROCKET} Here are your filtered dork results ({len(filtered_links)} links)!")
         os.remove(file_name)
     else:
         await update.message.reply_text(f"{EMOJI_SEARCH} No valid links found after filtering.")
@@ -290,6 +279,33 @@ async def check_gateway(html):
         'Cybersource': r'cybersource\.com',
         'Shopify Payments': r'shopify\.com/payment',
         '2Checkout': r'2checkout\.com',
+        'USAePay': r'usaepay\.com',
+        'Epoch': r'epoch\.com',
+        'RocketPay': r'rocketpay\.com',
+        'CCBill': r'ccbill\.com',
+        'Skrill': r'skrill\.com',
+        'BlueSnap': r'bluesnap\.com',
+        'Paysafe': r'paysafe\.com',
+        'Wirecard': r'wirecard\.com',
+        'Klarna': r'klarna\.com',
+        'Sage Pay': r'sagepay\.com',
+        'Nets': r'nets\.eu',
+        'Elavon': r'elavon\.com',
+        'First Data': r'firstdata\.com',
+        'Global Payments': 
+
+ r'globalpayments\.com',
+        'Ingenico': r'ingenico\.com',
+        'Verifone': r'verifone\.com',
+        'Cardstream': r'cardstream\.com',
+        'Checkout.com': r'checkout\.com',
+        'Dwolla': r'dwolla\.com',
+        'GoCardless': r'gocardless\.com',
+        'Mollie': r'mollie\.com',
+        'Payoneer': r'payoneer\.com',
+        'Paysera': r'paysera\.com',
+        'Razorpay': r'razorpay\.com',
+        'Stripe Connect': r'stripe\.com/connect',
     }
     
     detected_gateways = []
@@ -325,7 +341,6 @@ async def check_graphql(html, url):
     return 'Not detected'
 
 async def check_cloudflare(html):
-    
     cloudflare_patterns = [
         r'cloudflare-nginx',
         r'__cfduid',
@@ -382,31 +397,43 @@ async def gates(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{EMOJI_LOCK} You are not authorized to use this bot.")
         return
 
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        await update.message.reply_text(f"{EMOJI_CHART} Please reply to a file with /gates command.")
-        return
+    if update.message.reply_to_message and update.message.reply_to_message.document:
+        # Process file
+        file = await context.bot.get_file(update.message.reply_to_message.document.file_id)
+        file_path = await file.download_to_drive()
 
-    file = await context.bot.get_file(update.message.reply_to_message.document.file_id)
-    file_path = await file.download_to_drive()
+        with open(file_path, 'r') as f:
+            urls = f.read().splitlines()
 
-    with open(file_path, 'r') as f:
-        urls = f.read().splitlines()
+        progress_message = await update.message.reply_text(f"{EMOJI_GEAR} Processing gates. Please wait...")
 
-    progress_message = await update.message.reply_text(f"{EMOJI_GEAR} Processing gates. Please wait...")
+        async with ClientSession() as session:
+            tasks = [process_url(session, url) for url in urls]
+            results = await asyncio.gather(*tasks)
 
-    async with ClientSession() as session:
-        tasks = [process_url(session, url) for url in urls]
-        results = await asyncio.gather(*tasks)
+        results_text = "".join(results)
+        result_file = f"gate_results_{user_id}.txt"
+        with open(result_file, 'w', encoding='utf8') as file:
+            file.write(results_text)
 
-    results_text = "".join(results)
-    result_file = f"gate_results_{user_id}.txt"
-    with open(result_file, 'w', encoding='utf8') as file:
-        file.write(results_text)
+        await update.message.reply_document(open(result_file, 'rb'), caption=f"{EMOJI_ROCKET} Here are your gate results!")
+        os.remove(result_file)
+        os.remove(file_path)
+        await progress_message.delete()
+    else:
+        # Process single URL
+        url = ' '.join(context.args)
+        if not url:
+            await update.message.reply_text(f"{EMOJI_CHART} Please provide a URL to check. Usage: /gates <url>")
+            return
 
-    await update.message.reply_document(open(result_file, 'rb'), caption=f"{EMOJI_ROCKET} Here are your gate results!")
-    os.remove(result_file)
-    os.remove(file_path)
-    await progress_message.delete()
+        progress_message = await update.message.reply_text(f"{EMOJI_GEAR} Processing gate. Please wait...")
+
+        async with ClientSession() as session:
+            result = await process_url(session, url)
+
+        await update.message.reply_text(result, parse_mode='HTML')
+        await progress_message.delete()
 
 async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
     if is_callback:
